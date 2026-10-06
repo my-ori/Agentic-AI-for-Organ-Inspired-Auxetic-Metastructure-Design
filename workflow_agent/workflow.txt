@@ -1,0 +1,118 @@
+**The computer has been installed WSL.**
+**The work runs well on the environment of cnn_gpu. Some FE analysis should run on the environment of sfepy-env2. I will note that. **
+
+# conda environments:
+
+cnn_gpu                  /home/yingbchen/miniconda3/envs/cnn_gpu
+sfepy-env2               /home/yingbchen/miniconda3/envs/sfepy-env2
+
+
+
+**Input: y_target.json**
+**For each case, y_target.json is under the case folder.**
+**run the following code with the command**
+
+python guided_sample_diffusion_flexible_target.py \
+--ddpm_ckpt ddpm_epoch_2950.pt \
+--cnn_ckpt  best.pt \
+--cnn_cfg   config.json \
+--target_json y_target.json \
+--out_dir y_0_1_960 \
+--num 960 \
+--num_batch 32 \
+--pool_mult 3 \
+--volfrac_min 0.10 \
+--guidance_scale 2.0 \
+--guidance_start_frac 0.30 \
+--guidance_power 2.0 \
+--w_stress 0.0 \
+--w_nu 1.0 \
+--seed 200
+
+**Then, run the following code with the command under folder y_0_1_960**
+
+python extract_epsilon_candidates.py \
+  --pt guided_samples_960.pt \
+  --constraint nu \
+  --space normalized \
+  --strategy quantile \
+  --num_eps 8
+  
+**pick up the Min epsilon value and fixing the Max value is 1**
+**the Min epsilon value can be found in epsilon_candidates_nu_normalized.json>"constraint_mse_min":, rather than the minimum "suggested_epsilons":**
+**run the following code**
+
+python epsilon_dividing.py --range 'min_epsilon',1
+
+**the 10 epsilon values are outputed in the file '10_epsion_values.txt'**
+**run 'sweep_epsilon_runs_and_merge.py' with the following command**
+
+python sweep_epsilon_runs_and_merge.py \
+  --sampler_py guided_sample_diffusion_epsilon_constraint.py \
+  --ddpm_ckpt ddpm_epoch_2950.pt \
+  --cnn_ckpt best.pt \
+  --cnn_cfg config.json \
+  --target_json y_target.json \
+  --out_dir sweep_eps_y_nu \
+  --primary_objective stress \
+  --epsilons (the 10 epsilon_values) \
+  --runs_per_epsilon 10 \
+  --base_seed 200 \
+  --num 1 \
+  --num_batch 128 \
+  --pool_mult 1 \
+  --max_draws 50000 \
+  --volfrac_min 0.10 \
+  --guidance_scale 2.0 \
+  --guidance_start_frac 0.30 \
+  --guidance_power 2.0 \
+  --constraint_penalty 10.0
+  
+  
+  
+**go to sweep_eps_y_nu/merged, copy y_target.json here and run calculate_physical_mae.py**
+python calculate_physical_mae.py \
+  --pt merged_all_candidates.pt \
+  --target_json y_target.json \
+  --out_csv physical_mae_all_candidates.csv \
+  --out_pt merged_all_candidates_with_physical_mae.pt
+  
+  
+**Then, run the plot_pareto_scatter_physical_mae.py**   
+**This code is used to plot the pareto scatter with the following command**
+python plot_pareto_scatter_physical_mae.py \
+  --csv physical_mae_all_candidates.csv \
+  --out_png pareto_physical_mae.png
+
+
+**Then, select the 5 representative designs using the following code and command**
+python select_samples_physical_mae.py \
+  --input merged_all_candidates_with_physical_mae.pt \
+  --output selected_samples.txt
+
+
+**If there are duplicates among the five samples, please decide for yourself to replace the duplicate one.**
+**copy the 5 samples into the folder '5samples'**
+**for each sample, do the following things**
+
+**generate the corresponding FE models with the following two code.**
+**the second code patch_npy_to_vtk_inp_stage2.py should run on the environment of sfepy-evn2**
+
+python extract_tile_and_vtk_from_guided_pt.py --pt (replace the name).pt 
+
+python patch_npy_to_vtk_inp_stage2.py --manifest fe/selected_summary.json
+
+
+**run the patch_tension.py under the 'fe' folder in the environment of sfepy-evn2**
+
+sfepy-run patch_tension.py
+
+**copy y_target.json and reaction_right_grip.csv to the same folder, and run compute_mae.py there**
+python compute_mae.py \
+  --target y_target.json \
+  --results reaction_right_grip.csv
+  
+**Finally, report 3 things:**
+**1. the pareto_scatter.png**
+**2. the figures of the structure of 5 samples**
+**3. a table reporting the FE MAE of the 5 samples**
